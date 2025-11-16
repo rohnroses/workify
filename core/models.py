@@ -69,7 +69,7 @@ class Order(models.Model):
         User,
         on_delete=models.CASCADE,
         related_name='orders',
-        limit_choices_to={'profile__role': 'employer'},  # только работодатели
+        limit_choices_to={'profile__role': 'employer'},
     )
     title = models.CharField(max_length=200)
     description = models.TextField()
@@ -109,3 +109,23 @@ class OrderApplication(models.Model):
 
     def __str__(self):
         return f"{self.worker} → {self.order.title} ({self.status})"
+
+class Review(models.Model):
+    RATING_CHOICES = [
+        (1, '⭐'),
+        (2, '⭐⭐'),
+        (3, '⭐⭐⭐'),
+        (4, '⭐⭐⭐⭐'),
+        (5, '⭐⭐⭐⭐⭐'),
+    ]
+
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='reviews')
+    reviewer = models.ForeignKey(User, on_delete=models.CASCADE, limit_choices_to={'profile__role': 'employer'})
+    worker = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviews')
+    rating = models.IntegerField(choices=RATING_CHOICES)
+    comment = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Review by {self.reviewer.username} for {self.worker.username}"
+
