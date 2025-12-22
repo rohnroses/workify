@@ -34,6 +34,7 @@ class OrderSerializer(serializers.ModelSerializer):
     employer = serializers.HiddenField(default=serializers.CurrentUserDefault())
     category_name = serializers.CharField(source='category.name', read_only=True)
     employer_username = serializers.CharField(source='employer.username', read_only=True)
+    
 
     class Meta:
         model = Order
@@ -76,7 +77,7 @@ class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = ['id', 'order', 'order_title', 'reviewer', 'reviewer_username', 'worker', 'worker_username', 'rating', 'comment', 'created_at']
-        read_only_fields = ('created_at', 'reviewer')
+        read_only_fields = ('created_at', 'reviewer', 'worker')
 
     def validate(self, attrs):
         order = attrs.get('order')

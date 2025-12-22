@@ -2,6 +2,7 @@ from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions, generics
+from rest_framework.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password, ValidationError
 from django.db import IntegrityError
@@ -10,6 +11,10 @@ from .serializers import RegisterSerializer
 from .models import Order, OrderApplication, Profile, Category, Review
 from .serializers import OrderSerializer, CategorySerializer, ProfileSerializer, OrderApplicationSerializer, OrderApplicationSerializerForEmployer, ReviewSerializer
 from .permissions import IsEmployer, IsWorker
+from .services import (
+    UserService, OrderService, OrderApplicationService, 
+    ReviewService, ProfileService, CategoryService
+)
 
 class RegisterView(APIView):
     def post(self, request):
@@ -32,30 +37,40 @@ class RegisterView(APIView):
 
 
 class OrderAPIView(generics.ListAPIView):
-    queryset = Order.objects.all()
     serializer_class = OrderSerializer
     
     def get_queryset(self):
-        queryset = super().get_queryset()
         category = self.request.query_params.get('category')
-        if category:
-            queryset = queryset.filter(category=category)
-        return queryset
+        return OrderService.get_orders_by_category(category)
     
 class MyOrdersAPIView(generics.ListAPIView):
-    queryset = Order.objects.all()
     serializer_class = OrderSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        queryset = queryset.filter(employer=self.request.user)
-        return queryset
+        return OrderService.get_user_orders(self.request.user)
         
 
 class CreateOrderAPIView(generics.CreateAPIView):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
     permission_classes = [IsEmployer]
+    
+    def perform_create(self, serializer):
+        OrderService.create_order(serializer.validated_data)
+
+
+class DeleteOrderAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsEmployer]
+
+    def delete(self, request, pk):
+        try:
+            order = Order.objects.get(pk=pk)
+            OrderService.delete_order(order, request.user)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class CategoryAPIView(generics.ListAPIView):
     queryset = Category.objects.all()
@@ -66,7 +81,7 @@ class ProfileAPIView(generics.RetrieveUpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]   
 
     def get_object(self):
-        return Profile.objects.get(user=self.request.user)
+        return ProfileService.get_user_profile(self.request.user)
 
 class CreateOrderApplicationAPIView(generics.CreateAPIView):
     serializer_class = OrderApplicationSerializer
@@ -78,10 +93,7 @@ class ApplicationAPIView(generics.ListAPIView):
 
     def get_queryset(self):
         order_id = self.request.query_params.get('order')
-        queryset = OrderApplication.objects.filter(order__employer=self.request.user).select_related('order', 'worker')
-        if order_id:
-            queryset = queryset.filter(order_id=order_id)
-        return queryset
+        return OrderApplicationService.get_employer_applications(self.request.user, order_id)
 
     def post(self, request, *args, **kwargs):
         action = request.data.get('action')
@@ -101,53 +113,34 @@ class ApplicationAPIView(generics.ListAPIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        order = application.order
-        
-        if order.employer != request.user:
-            return Response(
-                {'detail': 'You do not have permission to manage this application'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        if action == 'accept':
-            if order.status != 'open':
+        try:
+            if action == 'accept':
+                application, order = OrderApplicationService.accept_application(
+                    application, request.user
+                )
+                return Response({
+                    'message': 'Application accepted and order status updated to in progress',
+                    'application': OrderApplicationSerializerForEmployer(application).data,
+                    'order': OrderSerializer(order).data
+                })
+            
+            elif action == 'reject':
+                application = OrderApplicationService.reject_application(
+                    application, request.user
+                )
+                return Response({
+                    'message': 'Application rejected',
+                    'application': OrderApplicationSerializerForEmployer(application).data
+                })
+            
+            else:
                 return Response(
-                    {'detail': 'This order is no longer open for applications'},
+                    {'detail': 'Invalid action. Use "accept" or "reject"'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-
-            order.status = 'in_progress'
-            order.save()
-
-            application.status = 'accepted'
-            application.save()
-
-            OrderApplication.objects.filter(order=order).exclude(pk=application.pk).update(status='rejected')
-
-            return Response({
-                'message': 'Application accepted and order status updated to in progress',
-                'application': OrderApplicationSerializerForEmployer(application).data,
-                'order': OrderSerializer(order).data
-            })
-        
-        elif action == 'reject':
-            if application.status != 'pending':
-                return Response(
-                    {'detail': 'Can only reject pending applications'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            application.status = 'rejected'
-            application.save()
-            
-            return Response({
-                'message': 'Application rejected',
-                'application': OrderApplicationSerializerForEmployer(application).data
-            })
-        
-        else:
+        except ValidationError as e:
             return Response(
-                {'detail': 'Invalid action. Use "accept" or "reject"'},
+                {'detail': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -157,11 +150,7 @@ class ApplicationListByOrderAPIView(generics.ListAPIView):
 
     def get_queryset(self):
         order_id = self.kwargs.get('order_id')
-        queryset = OrderApplication.objects.filter(
-            order_id=order_id,
-            order__employer=self.request.user
-        ).select_related('order', 'worker')
-        return queryset
+        return OrderApplicationService.get_applications_by_order(order_id, self.request.user)
 
 class CreateReviewAPIView(generics.CreateAPIView):
     queryset = Review.objects.all()
@@ -169,14 +158,14 @@ class CreateReviewAPIView(generics.CreateAPIView):
     permission_classes = [IsEmployer]
 
     def perform_create(self, serializer):
-        serializer.save(reviewer=self.request.user)
+        ReviewService.create_review(serializer.validated_data, self.request.user)
 
 class WorkerApplicationsAPIView(generics.ListAPIView):
     serializer_class = OrderApplicationSerializer
     permission_classes = [permissions.IsAuthenticated, IsWorker]
 
     def get_queryset(self):
-        return OrderApplication.objects.filter(worker=self.request.user).select_related('order', 'order__employer')
+        return OrderApplicationService.get_worker_applications(self.request.user)
 
 class ReviewAPIView(generics.ListAPIView):
     serializer_class = ReviewSerializer
@@ -185,20 +174,7 @@ class ReviewAPIView(generics.ListAPIView):
     def get_queryset(self):
         order_id = self.request.query_params.get('order')
         worker_id = self.request.query_params.get('user')
-        queryset = Review.objects.all().select_related('order', 'reviewer', 'worker')
-        
-        # Employers see reviews for their orders
-        if self.request.user.profile.role == 'employer':
-            queryset = queryset.filter(order__employer=self.request.user)
-        # Workers see reviews about them
-        else:
-            queryset = queryset.filter(worker=self.request.user)
-        
-        if order_id:
-            queryset = queryset.filter(order_id=order_id)
-        if worker_id:
-            queryset = queryset.filter(worker_id=worker_id)
-        return queryset
+        return ReviewService.get_user_reviews(self.request.user, order_id, worker_id)
 
 
 class UpdateOrderStatusAPIView(APIView):
@@ -213,12 +189,6 @@ class UpdateOrderStatusAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        if order.employer != request.user:
-            return Response(
-                {'detail': 'You do not have permission to manage this order'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
         new_status = request.data.get('status')
         
         if not new_status:
@@ -227,33 +197,17 @@ class UpdateOrderStatusAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        valid_statuses = ['open', 'in_progress', 'completed', 'cancelled']
-        if new_status not in valid_statuses:
+        try:
+            order = OrderService.update_order_status(order, new_status, request.user)
+            return Response({
+                'message': f'Order status updated to {new_status}',
+                'order': OrderSerializer(order).data
+            }, status=status.HTTP_200_OK)
+        except ValidationError as e:
             return Response(
-                {'detail': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'},
+                {'detail': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        valid_transitions = {
-            'open': ['in_progress', 'cancelled'],
-            'in_progress': ['completed', 'cancelled'],
-            'completed': [],
-            'cancelled': []
-        }
-        
-        if new_status not in valid_transitions.get(order.status, []):
-            return Response(
-                {'detail': f'Cannot transition from "{order.status}" to "{new_status}". Valid transitions: {valid_transitions.get(order.status, [])}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        order.status = new_status
-        order.save()
-        
-        return Response({
-            'message': f'Order status updated to {new_status}',
-            'order': OrderSerializer(order).data
-        }, status=status.HTTP_200_OK)
 
 
 class WorkerAcceptedOrdersAPIView(generics.ListAPIView):
@@ -261,7 +215,22 @@ class WorkerAcceptedOrdersAPIView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated, IsWorker]
 
     def get_queryset(self):
-        return Order.objects.filter(
-            applications__worker=self.request.user,
-            applications__status='accepted'
-        ).distinct().select_related('employer', 'category')
+        return OrderService.get_worker_accepted_orders(self.request.user)
+
+
+class JobStatsAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({
+            'total_jobs': OrderService.get_total_job_count(),
+            'total_categories': Category.objects.count()
+        })
+
+
+class CategorySyncAPIView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request):
+        CategoryService.sync_category_job_counts()
+        return Response({'message': 'Category job counts synced successfully'})

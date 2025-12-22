@@ -1,5 +1,12 @@
 from django.urls import path 
-from .views import RegisterView, OrderAPIView, CreateOrderAPIView, CategoryAPIView, ProfileAPIView, CreateOrderApplicationAPIView, MyOrdersAPIView, ApplicationAPIView, ApplicationListByOrderAPIView, WorkerApplicationsAPIView, ReviewAPIView, CreateReviewAPIView, UpdateOrderStatusAPIView, WorkerAcceptedOrdersAPIView
+from .views import (
+    RegisterView, OrderAPIView, CreateOrderAPIView, CategoryAPIView, 
+    ProfileAPIView, CreateOrderApplicationAPIView, MyOrdersAPIView, 
+    ApplicationAPIView, ApplicationListByOrderAPIView, WorkerApplicationsAPIView, 
+    ReviewAPIView, CreateReviewAPIView, UpdateOrderStatusAPIView, 
+    WorkerAcceptedOrdersAPIView, JobStatsAPIView, CategorySyncAPIView,
+    DeleteOrderAPIView
+)
 
 urlpatterns = [
     path('api/v1/register/', RegisterView.as_view(), name='register'),
@@ -17,5 +24,8 @@ urlpatterns = [
     path('api/v1/orders/<int:order_id>/status/', UpdateOrderStatusAPIView.as_view(), name='update-order-status'),
     path('api/v1/reviewcreate/', CreateReviewAPIView.as_view(), name='create-review'),
     path('api/v1/reviewlist/', ReviewAPIView.as_view(), name='reviewlist'),
+    path('api/v1/stats/', JobStatsAPIView.as_view(), name='job-stats'),
+    path('api/v1/categories/sync/', CategorySyncAPIView.as_view(), name='categories-sync'),
+    path('api/v1/orders/<int:pk>/delete/', DeleteOrderAPIView.as_view(), name='delete-order'),
 ]
 
