@@ -14,11 +14,21 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'workify.settings')
 
 application = get_wsgi_application()
 
-# Run migrations automatically on startup (Workaround for restricted shell access)
+# Run migrations and seed data automatically on startup
 if os.environ.get('RENDER'):
     from django.core.management import call_command
+    from core.models import Category
     try:
         call_command('migrate', interactive=False)
-        print("Migrations applied successfully!")
+        
+        # Seed initial categories
+        initial_categories = [
+            'Cleaning', 'Delivery', 'Repair', 'Translation', 
+            'IT & Programming', 'Design', 'Marketing', 'Household'
+        ]
+        for name in initial_categories:
+            Category.objects.get_or_create(name=name)
+            
+        print("Migrations and seed data applied successfully!")
     except Exception as e:
-        print(f"Error applying migrations: {e}")
+        print(f"Error during startup tasks: {e}")
