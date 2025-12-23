@@ -235,13 +235,3 @@ class CategorySyncAPIView(APIView):
         CategoryService.sync_category_job_counts()
         return Response({'message': 'Category job counts synced successfully'})
 
-# ВРЕМЕННЫЙ ЭНДПОИНТ ДЛЯ НАПОЛНЕНИЯ
-class BulkCategoryCreateView(APIView):
-    permission_classes = [permissions.AllowAny]
-    def post(self, request):
-        names = request.data.get('names', [])
-        created_count = 0
-        for name in names:
-            Category.objects.get_or_create(name=name)
-            created_count += 1
-        return Response({"message": f"Successfully created {created_count} categories"})

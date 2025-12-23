@@ -26,7 +26,6 @@ urlpatterns = [
     path('api/v1/reviewlist/', ReviewAPIView.as_view(), name='reviewlist'),
     path('api/v1/stats/', JobStatsAPIView.as_view(), name='job-stats'),
     path('api/v1/categories/sync/', CategorySyncAPIView.as_view(), name='categories-sync'),
-    path('api/v1/temp-bulk-categories/', BulkCategoryCreateView.as_view()),
     path('api/v1/orders/<int:pk>/delete/', DeleteOrderAPIView.as_view(), name='delete-order'),
 ]
 
